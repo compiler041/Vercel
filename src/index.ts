@@ -7,11 +7,11 @@ import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "redis";
 
-// Fix __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Redis
+const OUTPUT_DIR = path.join(process.cwd(), "src", "output");
+
 const publisher = createClient();
 const subscriber = createClient();
 
@@ -22,36 +22,48 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// Dummy upload (replace later)
 async function uploadFile(key: string, filePath: string) {
     console.log("Uploading:", key);
 }
 
 app.post("/deploy", async (req, res) => {
     const repoUrl = req.body.repoUrl;
-    const id = generate();
 
-    await simpleGit().clone(repoUrl, path.join(__dirname, `output/${id}`));
-
-    const files = getAllFiles(path.join(__dirname, `output/${id}`));
-
-    for (const file of files) {
-        await uploadFile(file.slice(__dirname.length + 1), file);
+    if (!repoUrl || typeof repoUrl !== "string") {
+        res.status(400).json({ error: "repoUrl is required" });
+        return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 5000));
+    const id = generate();
 
-    publisher.lPush("build-queue", id);
-    publisher.hSet("status", id, "uploaded");
+    try {
+        await simpleGit().clone(repoUrl, path.join(OUTPUT_DIR, id));
 
-    res.json({ id });
+        const files = getAllFiles(path.join(OUTPUT_DIR, id));
+        for (const file of files) {
+            await uploadFile(file.slice(OUTPUT_DIR.length + 1), file);
+        }
+
+        await publisher.hSet("status", id, "uploaded");
+        await publisher.lPush("build-queue", id);
+
+        res.json({ id });
+    } catch (error) {
+        console.error(error);
+        res.status(500).json({ error: (error as Error).message });
+    }
 });
 
 app.get("/status", async (req, res) => {
     const id = req.query.id as string;
-    const response = await subscriber.hGet("status", id);
 
+    if (!id) {
+        res.status(400).json({ error: "id query parameter is required" });
+        return;
+    }
+
+    const response = await subscriber.hGet("status", id);
     res.json({ status: response });
 });
 
-app.listen(3000);
+app.listen(3000, () => console.log("Server running on port 3000"));
