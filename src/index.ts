@@ -6,11 +6,13 @@ import { getAllFiles } from "./file.js";
 import path, { dirname } from "path";
 import { fileURLToPath } from "url";
 import { createClient } from "redis";
-
+import fs from "fs";
+import { build } from "./build.js"; // your build function
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const OUTPUT_DIR = path.join(process.cwd(), "src", "output");
+//FIXED STRUCTURE
+const REPO_DIR = path.join(process.cwd(), "repos");
 
 const publisher = createClient();
 const subscriber = createClient();
@@ -22,8 +24,23 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+
+
+//detect build folder
+function getBuildFolder(repoPath: string) {
+    const distPath = path.join(repoPath, "dist");
+    const buildPath = path.join(repoPath, "build");
+
+    if (fs.existsSync(distPath)) return distPath;
+    if (fs.existsSync(buildPath)) return buildPath;
+
+    throw new Error("No build folder found");
+}
+
 async function uploadFile(key: string, filePath: string) {
-    console.log("Uploading:", key);
+    const uploadPath = path.join(REPO_DIR, "uploads", key);
+    await fs.promises.mkdir(path.dirname(uploadPath), { recursive: true });
+    await fs.promises.copyFile(filePath, uploadPath);
 }
 
 app.post("/deploy", async (req, res) => {
@@ -35,21 +52,36 @@ app.post("/deploy", async (req, res) => {
     }
 
     const id = generate();
+    const repoPath = path.join(REPO_DIR, id);
 
     try {
-        await simpleGit().clone(repoUrl, path.join(OUTPUT_DIR, id));
+        // clone
+        await simpleGit().clone(repoUrl, repoPath);
 
-        const files = getAllFiles(path.join(OUTPUT_DIR, id));
+        //  build
+        await build(id);
+
+        //detect build output
+        const buildFolder = getBuildFolder(repoPath);
+
+        //collect files
+        const files = getAllFiles(buildFolder);
+
+        //upload
         for (const file of files) {
-            await uploadFile(file.slice(OUTPUT_DIR.length + 1), file);
+            const relativePath = file.slice(buildFolder.length + 1);
+            const key = `${id}/${relativePath}`;
+            await uploadFile(key, file);
         }
 
+        //update status + queue
         await publisher.hSet("status", id, "uploaded");
         await publisher.lPush("build-queue", id);
 
         res.json({ id });
     } catch (error) {
         console.error(error);
+        await publisher.hSet("status", id, "failed");
         res.status(500).json({ error: (error as Error).message });
     }
 });
