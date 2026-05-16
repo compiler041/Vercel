@@ -8,77 +8,139 @@ import { fileURLToPath } from "url";
 import { createClient } from "redis";
 import fs from "fs";
 import { build } from "./build.js";
-import { uploadFile } from "./upload.js"; //R2 upload
+import { uploadFile } from "./upload.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-//folders
+// folders
 const REPO_DIR = path.join(process.cwd(), "repos");
+const UPLOAD_DIR = path.join(process.cwd(), "uploads");
 
-//redis
+// redis
 const publisher = createClient();
 const subscriber = createClient();
 
+// TEMPORARY:
+// comment if redis not running
 await publisher.connect();
 await subscriber.connect();
 
-//express setup
+// express setup
 const app = express();
+
 app.use(cors());
 app.use(express.json());
 
 
-//detect build folder
-function getBuildFolder(repoPath: string) {
-    const distPath = path.join(repoPath, "dist");
-    const buildPath = path.join(repoPath, "build");
+//  STATIC HOSTING
+app.use(
+    "/deployments",
+    express.static(UPLOAD_DIR)
+);
 
-    if (fs.existsSync(distPath)) return distPath;
-    if (fs.existsSync(buildPath)) return buildPath;
+
+// detect build folder
+function getBuildFolder(repoPath: string) {
+
+    const distPath = path.join(
+        repoPath,
+        "dist"
+    );
+
+    const buildPath = path.join(
+        repoPath,
+        "build"
+    );
+
+    if (fs.existsSync(distPath)) {
+        return distPath;
+    }
+
+    if (fs.existsSync(buildPath)) {
+        return buildPath;
+    }
 
     throw new Error("No build folder found");
 }
 
 
-//DEPLOY ROUTE
+// DEPLOY ROUTE
 app.post("/deploy", async (req, res) => {
+
     const repoUrl = req.body.repoUrl;
 
     if (!repoUrl || typeof repoUrl !== "string") {
-        return res.status(400).json({ error: "repoUrl is required" });
+
+        return res.status(400).json({
+            error: "repoUrl is required"
+        });
     }
 
     const id = generate();
-    const repoPath = path.join(REPO_DIR, id);
+
+    const repoPath = path.join(
+        REPO_DIR,
+        id
+    );
 
     try {
+
         console.log("Cloning repo...");
-        await simpleGit().clone(repoUrl, repoPath);
+
+        await simpleGit().clone(
+            repoUrl,
+            repoPath
+        );
 
         console.log("Building project...");
-        await build(id); // must build inside repos/<id>
 
-        const buildFolder = getBuildFolder(repoPath);
-        console.log("Build folder:", buildFolder);
+        await build(id);
 
-        const files = getAllFiles(buildFolder);
+        const buildFolder = getBuildFolder(
+            repoPath
+        );
 
-        console.log("Uploading files to R2...");
+        console.log(
+            "Build folder:",
+            buildFolder
+        );
+
+        const files = getAllFiles(
+            buildFolder
+        );
+
+        console.log("Uploading files...");
 
         for (const file of files) {
-            const relativePath = file.slice(buildFolder.length + 1);
+
+            const relativePath = file.slice(
+                buildFolder.length + 1
+            );
+
             const key = `${id}/${relativePath}`;
 
-            await uploadFile(key, file);
+            await uploadFile(
+                key,
+                file
+            );
         }
 
-        //update redis
-        await publisher.hSet("status", id, "uploaded");
-        await publisher.lPush("build-queue", id);
+        // redis status
+        await publisher.hSet(
+            "status",
+            id,
+            "uploaded"
+        );
 
-        //return deployment URL
-        const url = `https://<your-bucket>.r2.dev/${id}/index.html`;
+        await publisher.lPush(
+            "build-queue",
+            id
+        );
+
+        //  FINAL URL
+        const url =
+`http://localhost:3000/deployments/${id}/index.html`;
 
         res.json({
             id,
@@ -86,9 +148,14 @@ app.post("/deploy", async (req, res) => {
         });
 
     } catch (error) {
+
         console.error(error);
 
-        await publisher.hSet("status", id, "failed");
+        await publisher.hSet(
+            "status",
+            id,
+            "failed"
+        );
 
         res.status(500).json({
             error: (error as Error).message
@@ -97,21 +164,54 @@ app.post("/deploy", async (req, res) => {
 });
 
 
-//STATUS ROUTE
+// STATUS ROUTE
 app.get("/status", async (req, res) => {
+
     const id = req.query.id as string;
 
     if (!id) {
-        return res.status(400).json({ error: "id query parameter is required" });
+
+        return res.status(400).json({
+            error: "id query parameter is required"
+        });
     }
 
-    const status = await subscriber.hGet("status", id);
+    const status = await subscriber.hGet(
+        "status",
+        id
+    );
 
     res.json({ status });
 });
 
 
-//START SERVER
+// START SERVER
 app.listen(3000, () => {
-    console.log("Server running on port 3000");
+
+    console.log(
+        "Server running on port 3000"
+    );
+});
+
+app.get("/deployments/:id", (req, res) => {
+
+    const id = req.params.id;
+
+    const indexPath = path.join(
+        UPLOAD_DIR,
+        id,
+        "index.html"
+    );
+
+    // deployment missing
+    if (!fs.existsSync(indexPath)) {
+
+        return res.status(404).send(`
+            <h1>Deployment Not Found</h1>
+            <p>No deployment exists for ID: ${id}</p>
+        `);
+    }
+
+    // serve deployment
+    res.sendFile(indexPath);
 });
