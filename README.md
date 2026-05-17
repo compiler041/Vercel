@@ -1,170 +1,85 @@
-# Mini Vercel Clone
+# Deployify — Self-hosted Vercel Clone
 
-This project is a simplified implementation of a deployment platform similar to Vercel. It allows users to provide a Git repository URL, automatically builds the project, and prepares it for deployment.
+A self-hosted deployment platform. Paste a GitHub URL → clone → build → serve.
 
-## Overview
-
-The system follows a basic deployment pipeline:
-
-1. Clone a GitHub repository
-2. Install dependencies
-3. Build the project
-4. Collect build output
-5. Upload build files to storage (e.g., AWS S3)
-
-This project focuses on understanding how deployment systems work internally rather than providing a production-ready solution.
-
----
-
-## Architecture
+## Project structure
 
 ```
-Client → API Server → Deployment Engine
-                          ↓
-                    Clone Repository
-                          ↓
-                    Install Dependencies
-                          ↓
-                    Build Project
-                          ↓
-                    Collect Build Files
-                          ↓
-                    Upload to Storage
+Vercel/
+├── server/          Express + TypeScript backend (port 3000)
+│   └── src/
+│       ├── index.ts     Routes: POST /deploy, GET /status, static /deployments
+│       ├── build.ts     npm install + npm run build runner
+│       ├── upload.ts    Copies build output to uploads/
+│       ├── file.ts      Recursive file walker
+│       └── utils.ts     Random ID generator
+└── client/          React + Vite frontend (port 5173)
+    └── src/
+        ├── App.tsx        Routing + sidebar layout
+        ├── lib/api.ts     Typed fetch wrappers → server API
+        └── pages/
+            ├── Landing.tsx   Public marketing page
+            ├── Deploy.tsx    Deployment form + live status polling
+            └── History.tsx   Session deployment history
 ```
 
-### Directory Structure
+## Prerequisites
 
-```
-repos/     # Cloned repositories (temporary workspace)
-output/    # (Optional) local build outputs
-src/       # Source code
-```
+| Tool | Version |
+|------|---------|
+| Node.js | 18+ |
+| npm | any |
+| Redis | 7+ (must be running on localhost:6379) |
 
-* `repos/<id>`: Contains the cloned repository and build process
-* `output/<id>`: Can be used for local testing or fallback serving
-
----
-
-## Features
-
-* Accepts a GitHub repository URL
-* Clones repository into a local workspace
-* Installs dependencies using npm
-* Runs project build script
-* Detects build output (`dist/` or `build/`)
-* Prepares files for upload to storage
-* Supports structured file traversal for deployment
-
----
-
-## How It Works
-
-### 1. Repository Cloning
-
-The system clones the provided repository into:
-
-```
-repos/<deployment-id>
+Start Redis:
+```bash
+redis-server
+# or with Docker:
+docker run -d -p 6379:6379 redis:7
 ```
 
-### 2. Build Process
+## Running locally
 
-Inside the cloned repository:
+### 1. Start the server
 
-* `npm install` is executed
-* `npm run build` is executed
-
-The build output is generated inside the project directory, typically in:
-
-* `dist/`
-* `build/`
-
-### 3. File Collection
-
-All files inside the build directory are recursively collected while preserving their relative paths.
-
-Example:
-
-```
-dist/
- ├── index.html
- ├── assets/
- │    ├── main.js
- │    ├── style.css
+```bash
+cd server
+npm install
+npm run build        # tsc → dist/
+node dist/index.js   # or: npm start
 ```
 
-Becomes:
+Server runs at **http://localhost:3000**
 
-```
-index.html
-assets/main.js
-assets/style.css
-```
+### 2. Start the client
 
-### 4. Deployment Storage
-
-Each file is uploaded to storage using a structured key:
-
-```
-<deployment-id>/index.html
-<deployment-id>/assets/main.js
-<deployment-id>/assets/style.css
+```bash
+cd client
+npm install
+npm run dev
 ```
 
----
+Frontend runs at **http://localhost:5173**
 
-## Technologies Used
+Vite proxies `/deploy`, `/status`, `/deployments` → `localhost:3000` automatically.
 
-* Node.js
-* TypeScript
-* child_process (for running build commands)
-* File System (fs, path)
-* AWS S3 (for storage)
+## API
 
----
+| Method | Path | Body / Query | Description |
+|--------|------|-------------|-------------|
+| POST | `/deploy` | `{ repoUrl: string }` | Start a deployment (returns immediately with `id` + final `url`) |
+| GET | `/status` | `?id=<id>` | Poll status: `queued` → `building` → `uploaded` \| `failed` |
+| GET | `/deployments/:id/index.html` | — | Serves the built static site |
 
-## Limitations
+## How it works
 
-* Only supports npm-based projects
-* Assumes presence of a `build` script
-* Does not support server-side frameworks (e.g., Next.js SSR)
-* No containerization or sandboxing
-* No authentication or rate limiting
+1. Client POSTs `repoUrl` → server responds instantly with `{ id, url }`
+2. Server runs clone + build in the background, updating Redis status
+3. Client polls `GET /status?id=<id>` every 2 seconds
+4. When status is `uploaded`, the live URL is shown and polling stops
 
----
+## Notes
 
-## Future Improvements
-
-* Support for multiple package managers (yarn, pnpm)
-* Deployment status tracking
-* Live logs using WebSockets
-* CDN integration for faster delivery
-* Custom domain support
-* Build sandboxing using containers
-
----
-
-## Getting Started
-
-1. Clone the repository
-2. Install dependencies
-3. Run the server
-4. Send a deployment request with a GitHub repository URL
-
----
-
-## Learning Goals
-
-This project helps in understanding:
-
-* How deployment pipelines work
-* Running shell commands programmatically
-* Managing file systems for builds
-* Uploading structured assets to cloud storage
-* Backend orchestration and automation
-
----
-
-## License
-
-This project is for educational purposes.
+- Only public GitHub repos are supported
+- Target repo must have a `build` npm script producing `dist/` or `build/`
+- Vite projects should set `base: "./"` in `vite.config.ts` for sub-path serving
