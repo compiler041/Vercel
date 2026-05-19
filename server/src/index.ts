@@ -36,9 +36,10 @@ const app = express();
 
 app.use(cors({
     origin: [
-        "http://localhost:5173",  // Vite dev server
-        "http://localhost:4173",  // Vite preview
+        "http://localhost:5173",
+        "http://localhost:4173",
         "http://127.0.0.1:5173",
+        process.env.CLIENT_URL || "",   // add this
     ],
     credentials: true,
 }));
@@ -100,7 +101,8 @@ app.post("/deploy", async (req, res) => {
     // The actual clone + build runs in the background.
     await publisher.hSet("status", id, "queued");
 
-    const url = `http://localhost:3000/deployments/${id}/index.html`;
+    const baseUrl = process.env.SERVER_URL || "http://localhost:3000";
+    const url = `${baseUrl}/deployments/${id}/index.html`;
     res.json({ id, url });
 
     // Background job
