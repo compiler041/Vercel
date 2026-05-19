@@ -22,8 +22,9 @@ fs.mkdirSync(REPO_DIR, { recursive: true });
 fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 // redis
-const publisher = createClient();
-const subscriber = createClient();
+// redis
+const publisher = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+const subscriber = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
 
 // TEMPORARY:
 // comment if redis not running
