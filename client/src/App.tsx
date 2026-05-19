@@ -16,7 +16,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
     let alive = true;
     async function check() {
       try {
-        const res = await fetch("/status?id=__health__");
+        const res = await fetch(`${import.meta.env.VITE_API_BASE ?? ""}/status?id=__health__`);
         if (alive) setServerOk(res.ok || res.status === 400); // 400 means server is up but id invalid
       } catch {
         if (alive) setServerOk(false);
@@ -103,7 +103,7 @@ function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
                 : "Server unreachable"}
             </span>
           </div>
-          <div className="text-xs text-[#333] mt-1 font-mono">localhost:3000</div>
+          <div className="text-xs text-[#333] mt-1 font-mono">{import.meta.env.VITE_API_BASE ?? "localhost:3000"}</div>
         </div>
       </aside>
     </>
